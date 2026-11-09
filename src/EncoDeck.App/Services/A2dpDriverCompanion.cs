@@ -41,7 +41,7 @@ public sealed class A2dpDriverCompanion : IDisposable
         using var timer = new PeriodicTimer(PollInterval);
         try
         {
-            do Check();
+            do TryCheck();
             while (await timer.WaitForNextTickAsync(ct).ConfigureAwait(false));
         }
         catch (OperationCanceledException)
@@ -52,12 +52,19 @@ public sealed class A2dpDriverCompanion : IDisposable
     private void OnStateChanged(object? sender, DeviceStateChangedEventArgs e)
     {
         // Another device, or a link that just came up: read it now rather than on the next tick.
-        if (Target(e.Current) is not null && Target(e.Current) != Target(e.Previous)) _ = Task.Run(Check);
+        if (Target(e.Current) is not null && Target(e.Current) != Target(e.Previous)) _ = Task.Run(TryCheck);
     }
 
     /// <summary>The Bluetooth device whose driver matters: the active one, while a link is up.</summary>
     private static ulong? Target(DeviceState state) =>
         state.Device is { Transport: DeviceTransport.Bluetooth } device && state.Connection.IsLinkUp() ? device.Address.Value : null;
+
+    /// <summary>One read; a transient failure must not end the poll loop, which would freeze the badge on a stale codec.</summary>
+    private void TryCheck()
+    {
+        try { Check(); }
+        catch (Exception ex) { _logger.LogWarning(ex, "A2DP driver read failed"); }
+    }
 
     private void Check()
     {
